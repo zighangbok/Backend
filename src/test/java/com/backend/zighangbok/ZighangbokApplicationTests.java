@@ -1,4 +1,4 @@
-package com.example.zighangbok;
+package com.backend.zighangbok;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
