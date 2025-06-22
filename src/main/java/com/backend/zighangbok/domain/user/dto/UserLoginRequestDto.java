@@ -6,21 +6,11 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 @Getter
-@NoArgsConstructor
 @AllArgsConstructor
-public class UserSignUpRequestDto {
-    @NotBlank
+@NoArgsConstructor
+public class UserLoginRequestDto {
+    @NotBlank(message = "아이디를 입력하세요")
     private String userId;
-
-    @NotBlank
+    @NotBlank(message = "비밀번호를 입력하세요")
     private String password;
-
-    @NotBlank
-    private String name;
-
-    @NotBlank
-    private String nickname;
-
-    @NotBlank
-    private String email;
 }

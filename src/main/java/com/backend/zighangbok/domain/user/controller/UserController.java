@@ -1,5 +1,7 @@
 package com.backend.zighangbok.domain.user.controller;
 
+import com.backend.zighangbok.domain.user.dto.UserLoginRequestDto;
+import com.backend.zighangbok.domain.user.dto.UserLoginResponseDto;
 import com.backend.zighangbok.domain.user.dto.UserSignUpRequestDto;
 import com.backend.zighangbok.domain.user.service.UserService;
 import jakarta.validation.Valid;
@@ -31,5 +33,26 @@ public class UserController {
         }
     }
 
-}
+    @PostMapping("/login")
+    public ResponseEntity<UserLoginResponseDto> login(
+            @Valid @RequestBody UserLoginRequestDto request) {
+        try {
+            UserLoginResponseDto response = userService.login(request);
+            return ResponseEntity.ok(response);
+        }//사용자 에러
+        catch (IllegalArgumentException e) {
+            UserLoginResponseDto errorResponse = UserLoginResponseDto.builder()
+                    .message(e.getMessage())
+                    .build();
 
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
+        }//시스템에러
+        catch (Exception e) {
+            UserLoginResponseDto errorResponse = UserLoginResponseDto.builder()
+                    .message("로그인 오류")
+                    .build();
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+        }
+
+    }
+}

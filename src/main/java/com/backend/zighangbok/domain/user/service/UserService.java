@@ -1,5 +1,7 @@
 package com.backend.zighangbok.domain.user.service;
 
+import com.backend.zighangbok.domain.user.dto.UserLoginRequestDto;
+import com.backend.zighangbok.domain.user.dto.UserLoginResponseDto;
 import com.backend.zighangbok.domain.user.dto.UserSignUpRequestDto;
 import com.backend.zighangbok.domain.user.entity.User;
 import com.backend.zighangbok.domain.user.repository.UserRepository;
@@ -26,6 +28,25 @@ public class UserService {
                 .build();
 
         userRepository.save(user);
+    }
+
+    public UserLoginResponseDto login(UserLoginRequestDto request) {
+
+        //유무 확인
+        User user = userRepository.findByUserId(request.getUserId())
+                .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 id 입니다"));
+
+        //비밀번호 검증
+
+        return UserLoginResponseDto.builder()
+                .id(user.getId())
+                .userId(user.getUserId())
+                .name(user.getName())
+                .nickname(user.getNickname())
+                .email(user.getEmail())
+                .message("로그인 성공")
+                .build();
+
     }
 
     private void validateDuplicateUser(UserSignUpRequestDto request) {
