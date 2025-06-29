@@ -22,9 +22,6 @@ public class UserService {
         User user = User.builder()
                 .userId(request.getUserId())
                 .password(request.getPassword())
-                .name(request.getName())
-                .nickname(request.getNickname())
-                .email(request.getEmail())
                 .build();
 
         userRepository.save(user);
@@ -41,10 +38,6 @@ public class UserService {
         return UserLoginResponseDto.builder()
                 .id(user.getId())
                 .userId(user.getUserId())
-                .name(user.getName())
-                .nickname(user.getNickname())
-                .email(user.getEmail())
-                .message("로그인 성공")
                 .build();
 
     }
@@ -52,12 +45,6 @@ public class UserService {
     private void validateDuplicateUser(UserSignUpRequestDto request) {
         if (userRepository.existsByUserId(request.getUserId())) {
             throw new IllegalArgumentException("이미 존재하는 아이디입니다.");
-        }
-        if (userRepository.existsByEmail(request.getEmail())) {
-            throw new IllegalArgumentException("이미 존재하는 이메일입니다.");
-        }
-        if (userRepository.existsByNickname(request.getNickname())) {
-            throw new IllegalArgumentException("이미 존재하는 닉네임입니다.");
         }
     }
 }
