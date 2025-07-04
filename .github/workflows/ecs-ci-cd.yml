@@ -80,7 +80,7 @@ jobs:
     # 1. GitHub 코드 체크아웃
     - name: Checkout
       uses: actions/checkout@v4
-	
+      
     # 2. JAR 파일 생성
     
     - name: Create application.yml from GitHub Secrets  # application.yml 추가
