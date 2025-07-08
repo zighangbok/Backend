@@ -24,7 +24,7 @@ public class UserController {
     @PostMapping("/signup")
     public ResponseEntity<Void> signup(@Valid @RequestBody UserSignUpRequestDto request) {
         try {
-            userService.signUp(request);  // void 메서드 호출
+            userService.signUp(request);
             return ResponseEntity.status(HttpStatus.CREATED).build();  // 201 Created만 반환
         } catch (IllegalArgumentException e) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();  // 400 Bad Request만 반환

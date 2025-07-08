@@ -28,6 +28,4 @@ public class User {
 
     @Column(unique = true, nullable = false, length = 500)
     private String password;
-
-    private String message;
 }
