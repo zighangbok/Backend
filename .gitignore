@@ -66,3 +66,4 @@ replay_pid*
 # application.yml
 **/application.yml
 
+src/main/resources/application.yml
