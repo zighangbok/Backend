@@ -4,7 +4,6 @@ spring:
     username: admin
     password: zighangbok
     driver-class-name: com.mysql.cj.jdbc.Driver
-
   jpa:
     hibernate:
       ddl-auto: update
