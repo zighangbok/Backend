@@ -1,0 +1,27 @@
+spring:
+  datasource:
+    url: jdbc:mysql://database-1.cjwa0qe46w4k.ap-northeast-2.rds.amazonaws.com:3306/zighangbok
+    username: admin
+    password: zighangbok
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+
+  main:
+    allow-bean-definition-overriding: true
+    lazy-initialization: true
+
+  elasticsearch:
+    uris: https://search-zighangbok-local-r6z3jvqzmdqbgqeaof65twtnhi.ap-northeast-2.es.amazonaws.com:443
+    username: zighangbok
+    password: Zighangbok1!
+    connection-timeout: 120s
+    socket-timeout: 120s
+    rest:
+      compatibility-mode: true
+
+server:
+  port: 8080
