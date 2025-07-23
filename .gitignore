@@ -63,6 +63,7 @@ replay_pid*
 
 
 **/application.yml
+**/application.yaml
 
 src/main/resources/application.yml
 .DS_Store

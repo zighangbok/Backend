@@ -14,8 +14,14 @@ import org.opensearch.index.query.QueryBuilders;
 import org.opensearch.search.SearchHit;
 import org.opensearch.search.builder.SearchSourceBuilder;
 import org.springframework.stereotype.Service;
+import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
+import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
+import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
+import software.amazon.awssdk.services.dynamodb.model.GetItemResponse;
 
 import java.io.IOException;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -25,7 +31,97 @@ import java.util.stream.Collectors;
 public class RecruitmentService {
 
     private final RestHighLevelClient client;
+    private final DynamoDbClient dynamoDbClient;
     private final ObjectMapper objectMapper = new ObjectMapper();
+
+    public List<RecruitmentSimpleDto> getRecommendedRecruitments(String userId) {
+        log.info("추천 채용 정보 조회 요청 - userId: {}", userId);
+
+        // 1. DynamoDB에서 추천 목록 조회
+        List<String> recommendationUuids = getRecommendationsFromDynamoDB(userId);
+        if (recommendationUuids.isEmpty()) {
+            log.info("사용자에게 해당하는 추천 채용 정보가 없습니다. userId: {}", userId);
+            return Collections.emptyList();
+        }
+
+        // 2. OpenSearch에서 추천된 공고 상세 정보 조회
+        return getRecruitmentsFromOpenSearch(recommendationUuids);
+    }
+
+    private List<String> getRecommendationsFromDynamoDB(String userId) {
+        String today = LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE);
+
+        GetItemRequest request = GetItemRequest.builder()
+                .tableName("user_recommendations")
+                .key(Collections.singletonMap("id", AttributeValue.builder().s(userId).build()))
+                .build();
+
+        try {
+            GetItemResponse response = dynamoDbClient.getItem(request);
+            if (response.hasItem()) {
+                Map<String, AttributeValue> item = response.item();
+                String createdAt = item.get("created_at").s();
+
+                today = createdAt; // 테스트 임!!!!!
+
+                if (!today.equals(createdAt)) {
+                    log.warn("DynamoDB의 추천 데이터가 최신이 아닙니다. userId: {}, createdAt: {}", userId, createdAt);
+
+                    return Collections.emptyList();
+                }
+
+                AttributeValue recommendationsAttr = item.get("recommendations");
+                if (recommendationsAttr != null && recommendationsAttr.hasL()) {
+                    log.info("DynamoDB에서 추천 목록 {}개를 찾았습니다. userId: {}", recommendationsAttr.l().size(), userId);
+                    return recommendationsAttr.l().stream()
+                            .map(AttributeValue::s)
+                            .collect(Collectors.toList());
+                }
+            } else {
+                log.warn("DynamoDB에서 추천 데이터를 찾을 수 없습니다. userId: {}", userId);
+            }
+        } catch (Exception e) {
+            log.error("DynamoDB 조회 실패 - userId: {}", userId, e);
+            throw new RuntimeException("추천 정보 조회 중 오류가 발생했습니다.", e);
+        }
+        return Collections.emptyList();
+    }
+
+    private List<RecruitmentSimpleDto> getRecruitmentsFromOpenSearch(List<String> uuids) {
+        if (uuids == null || uuids.isEmpty()) {
+            return Collections.emptyList();
+        }
+        log.info("OpenSearch에서 {}개의 채용 공고 조회를 시작합니다.", uuids.size());
+
+        SearchRequest searchRequest = new SearchRequest("recruitment_parsed");
+        SearchSourceBuilder sourceBuilder = new SearchSourceBuilder();
+
+        sourceBuilder.query(QueryBuilders.termsQuery("uuid.keyword", uuids));
+        sourceBuilder.size(uuids.size());
+        searchRequest.source(sourceBuilder);
+
+        try {
+            SearchResponse response = client.search(searchRequest, RequestOptions.DEFAULT);
+            List<RecruitmentSimpleDto> result = new ArrayList<>();
+
+            for (SearchHit hit : response.getHits().getHits()) {
+                Map<String, Object> sourceAsMap = hit.getSourceAsMap();
+
+                String uuid = (String) sourceAsMap.get("uuid");
+                String title = (String) sourceAsMap.get("title");
+                String companyJson = (String) sourceAsMap.get("company");
+                String companyName = parseCompanyName(companyJson);
+
+                result.add(new RecruitmentSimpleDto(uuid, title, companyName));
+            }
+            log.info("총 조회된 추천 공고 수: {}", result.size());
+            return result;
+
+        } catch (IOException e) {
+            log.error("OpenSearch 조회 실패 - uuids: {}", uuids, e);
+            throw new RuntimeException("채용정보 조회 중 오류가 발생했습니다.", e);
+        }
+    }
 
     public List<RecruitmentListDto> getRecruitmentList(int page, int size) {
         log.info("채용정보 조회 요청 - page: {}, size: {}", page, size);
@@ -51,20 +147,7 @@ public class RecruitmentService {
                 String title = (String) sourceAsMap.get("title");
                 String companyJson = (String) sourceAsMap.get("company"); // company는 String 형태임
 
-                String companyName = "회사명 없음";
-
-                if (companyJson != null && !companyJson.isEmpty()) {
-                    try {
-                        // 작은따옴표를 큰따옴표로 변환
-                        String fixedJson = companyJson.replace("'", "\"");
-                        Map<String, Object> companyMap = objectMapper.readValue(fixedJson, new TypeReference<>() {});
-                        if (companyMap.get("companyName") != null) {
-                            companyName = companyMap.get("companyName").toString();
-                        }
-                    } catch (Exception e) {
-                        log.warn("회사 정보 파싱 실패: {}", companyJson);
-                    }
-                }
+                String companyName = parseCompanyName(companyJson);
 
                 RecruitmentListDto dto = RecruitmentListDto.builder()
                         .uuid(uuid)
@@ -86,6 +169,25 @@ public class RecruitmentService {
             throw new RuntimeException("채용정보 조회 중 오류가 발생했습니다.", e);
         }
     }
+
+    private String parseCompanyName(String companyJson) {
+        if (companyJson == null || companyJson.isEmpty()) {
+            return "회사명 없음";
+        }
+        try {
+            // 작은따옴표를 큰따옴표로 변환
+            String fixedJson = companyJson.replace("'", "\"").replace("None", "null");
+            Map<String, Object> companyMap = objectMapper.readValue(fixedJson, new TypeReference<>() {});
+
+            if (companyMap.get("companyName") != null) {
+                return companyMap.get("companyName").toString();
+            }
+        } catch (Exception e) {
+            log.warn("회사 정보 파싱 실패: {}", companyJson);
+        }
+        return "회사명 없음";
+    }
+
     public List<RecruitmentSimpleDto> getSimpleRecruitmentList(int page, int size) {
         List<RecruitmentListDto> fullList = getRecruitmentList(page, size);
 
