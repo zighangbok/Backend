@@ -1,5 +1,6 @@
 {
   "family": "zighangbok",
+  "taskRoleArn": "arn:aws:iam::340547707424:role/ZighangbokTaskRole",
   "executionRoleArn": "arn:aws:iam::340547707424:role/ecsTaskExecutionRole",
   "networkMode": "awsvpc",
   "containerDefinitions": [
