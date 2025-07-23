@@ -3,6 +3,7 @@ package com.backend.zighangbok.domain.recruitment.controller;
 import com.backend.zighangbok.domain.recruitment.dto.RecruitmentListDto;
 import com.backend.zighangbok.domain.recruitment.dto.RecruitmentSimpleDto;
 import com.backend.zighangbok.domain.recruitment.service.RecruitmentService;
+import com.backend.zighangbok.domain.recruitment.dto.RerankRequestDto;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -10,11 +11,13 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+
 
 @Slf4j
 @RestController
@@ -53,7 +56,7 @@ public class RecruitmentController {
     }
 
     @PostMapping("/recommendations/rerank")
-    public ResponseEntity<Void> rerankRecommendations(HttpSession session) {
+    public ResponseEntity<Void> rerankRecommendations(HttpSession session, @RequestBody RerankRequestDto rerankRequestDto) {
         String userId = (String) session.getAttribute("userId");
         userId = "194fe462bb729d-099a43aec77eb6-1e525636-13c680-194fe462bb729d"; // test 임!!!!!!!
 
@@ -61,6 +64,6 @@ public class RecruitmentController {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
 
-        return recruitmentService.rerankRecommendations(userId);
+        return recruitmentService.rerankRecommendations(userId, rerankRequestDto.getSamples());
     }
 }
