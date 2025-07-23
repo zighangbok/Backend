@@ -183,7 +183,7 @@ public class RecruitmentService {
         }
         log.info("OpenSearch에서 {}개의 채용 공고 조회를 시작합니다. (순서 재정렬 포함)", uuids.size());
 
-        SearchRequest searchRequest = new SearchRequest("recruitment_parsed");
+        SearchRequest searchRequest = new SearchRequest("recruitment_parsed_depth");
         SearchSourceBuilder sourceBuilder = new SearchSourceBuilder();
 
         sourceBuilder.query(QueryBuilders.termsQuery("uuid.keyword", uuids));
@@ -223,11 +223,11 @@ public class RecruitmentService {
     public List<RecruitmentListDto> getRecruitmentList(int page, int size) {
         log.info("채용정보 조회 요청 - page: {}, size: {}", page, size);
 
-        SearchRequest searchRequest = new SearchRequest("recruitment_parsed");
+        SearchRequest searchRequest = new SearchRequest("recruitment_parsed_depth");
         SearchSourceBuilder sourceBuilder = new SearchSourceBuilder();
 
         int from = page * size;
-        sourceBuilder.query(QueryBuilders.matchAllQuery());
+        sourceBuilder.query(QueryBuilders.termQuery("depthFilter", 1));
         sourceBuilder.from(from);
         sourceBuilder.size(size);
 
