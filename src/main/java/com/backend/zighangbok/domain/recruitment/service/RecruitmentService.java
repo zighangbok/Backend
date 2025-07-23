@@ -14,6 +14,7 @@ import org.opensearch.index.query.QueryBuilders;
 import org.opensearch.search.SearchHit;
 import org.opensearch.search.builder.SearchSourceBuilder;
 import org.springframework.stereotype.Service;
+import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
@@ -100,13 +101,13 @@ public class RecruitmentService {
         return Collections.emptyList();
     }
 
-    public ResponseEntity<Void> rerankRecommendations(String userId) {
+    public ResponseEntity<Void> rerankRecommendations(String userId, List<String> samples) {
         List<String> recommendationUuids = getRecommendationsFromDynamoDB(userId);
 
         log.warn("recommendationUuids: {}", recommendationUuids); // 리랭킹 전
 
         if (recommendationUuids.isEmpty()) {
-            invokeLambdaFunction();
+            invokeLambdaFunction(userId, samples);
             return ResponseEntity.status(HttpStatus.CREATED).build();
         }
 
@@ -121,12 +122,24 @@ public class RecruitmentService {
         return ResponseEntity.ok().build();
     }
 
-    private void invokeLambdaFunction() {
+    private void invokeLambdaFunction(String userId, List<String> samples) {
         String functionName = "newUserRanking";
+        String payload;
+        try {
+            // userId와 samples를 포함하는 JSON 객체 생성
+            payload = objectMapper.writeValueAsString(Map.of(
+                    "user_id", userId,
+                    "samples", samples
+            ));
+        } catch (Exception e) {
+            log.error("Failed to create JSON payload", e);
+            return;
+        }
 
         InvokeRequest request = InvokeRequest.builder()
                 .functionName(functionName)
-                .build(); // payload 제거
+                .payload(SdkBytes.fromUtf8String(payload))
+                .build();
 
         try {
             InvokeResponse response = lambdaClient.invoke(request);
