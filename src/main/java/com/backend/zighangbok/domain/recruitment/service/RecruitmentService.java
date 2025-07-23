@@ -18,12 +18,24 @@ import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.GetItemResponse;
+import software.amazon.awssdk.services.dynamodb.model.UpdateItemRequest;
+import software.amazon.awssdk.services.lambda.LambdaClient;
+import software.amazon.awssdk.services.lambda.model.InvokeRequest;
+import software.amazon.awssdk.services.lambda.model.InvokeResponse;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 import java.io.IOException;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
-import java.util.*;
-import java.util.stream.Collectors;
+import java.util.Arrays;
+import java.util.Objects;
+
 
 @Slf4j
 @Service
@@ -32,6 +44,7 @@ public class RecruitmentService {
 
     private final RestHighLevelClient client;
     private final DynamoDbClient dynamoDbClient;
+    private final LambdaClient lambdaClient; // LambdaClient 주입
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public List<RecruitmentSimpleDto> getRecommendedRecruitments(String userId) {
@@ -87,35 +100,106 @@ public class RecruitmentService {
         return Collections.emptyList();
     }
 
+    public ResponseEntity<Void> rerankRecommendations(String userId) {
+        List<String> recommendationUuids = getRecommendationsFromDynamoDB(userId);
+
+        log.warn("recommendationUuids: {}", recommendationUuids); // 리랭킹 전
+
+        if (recommendationUuids.isEmpty()) {
+            invokeLambdaFunction();
+            return ResponseEntity.status(HttpStatus.CREATED).build();
+        }
+
+        if (recommendationUuids.size() > 5) {
+            List<String> topFive = new ArrayList<>(recommendationUuids.subList(0, 5));
+            List<String> remaining = new ArrayList<>(recommendationUuids.subList(5, recommendationUuids.size()));
+            remaining.addAll(topFive);
+            updateRecommendationsInDynamoDB(userId, remaining);
+            log.warn("re-ranked recommendationUuids: {}", remaining); // 리랭킹 후
+        }
+
+        return ResponseEntity.ok().build();
+    }
+
+    private void invokeLambdaFunction() {
+        String functionName = "newUserRanking";
+
+        InvokeRequest request = InvokeRequest.builder()
+                .functionName(functionName)
+                .build(); // payload 제거
+
+        try {
+            InvokeResponse response = lambdaClient.invoke(request);
+            log.info("Lambda function invoked successfully, response: {}", response.payload().asUtf8String());
+        } catch (Exception e) {
+            log.error("Failed to invoke Lambda function", e);
+        }
+    }
+
+
+    private void updateRecommendationsInDynamoDB(String userId, List<String> newRecommendations) {
+        String today = LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE);
+
+        List<AttributeValue> recommendationAttributeValues = newRecommendations.stream()
+                .map(uuid -> AttributeValue.builder().s(uuid).build())
+                .collect(Collectors.toList());
+
+        UpdateItemRequest request = UpdateItemRequest.builder()
+                .tableName("user_recommendations")
+                .key(Collections.singletonMap("id", AttributeValue.builder().s(userId).build()))
+                .updateExpression("SET recommendations = :r, created_at = :c")
+                .expressionAttributeValues(Map.of(
+                        ":r", AttributeValue.builder().l(recommendationAttributeValues).build(),
+                        ":c", AttributeValue.builder().s(today).build()
+                ))
+                .build();
+
+        try {
+            dynamoDbClient.updateItem(request);
+            log.info("Successfully updated recommendations for userId: {}", userId);
+        } catch (Exception e) {
+            log.error("Failed to update recommendations in DynamoDB for userId: {}", userId, e);
+            throw new RuntimeException("추천 순서 변경 중 오류가 발생했습니다.", e);
+        }
+    }
+
+
     private List<RecruitmentSimpleDto> getRecruitmentsFromOpenSearch(List<String> uuids) {
         if (uuids == null || uuids.isEmpty()) {
             return Collections.emptyList();
         }
-        log.info("OpenSearch에서 {}개의 채용 공고 조회를 시작합니다.", uuids.size());
+        log.info("OpenSearch에서 {}개의 채용 공고 조회를 시작합니다. (순서 재정렬 포함)", uuids.size());
 
         SearchRequest searchRequest = new SearchRequest("recruitment_parsed");
         SearchSourceBuilder sourceBuilder = new SearchSourceBuilder();
 
         sourceBuilder.query(QueryBuilders.termsQuery("uuid.keyword", uuids));
-        sourceBuilder.size(uuids.size());
+        sourceBuilder.size(uuids.size()); // 모든 문서를 가져오기 위해 크기를 uuid 리스트 크기로 설정
         searchRequest.source(sourceBuilder);
 
         try {
             SearchResponse response = client.search(searchRequest, RequestOptions.DEFAULT);
-            List<RecruitmentSimpleDto> result = new ArrayList<>();
 
-            for (SearchHit hit : response.getHits().getHits()) {
-                Map<String, Object> sourceAsMap = hit.getSourceAsMap();
+            // OpenSearch 결과를 UUID를 키로 하는 Map으로 변환 (순서 보장 없음)
+            Map<String, RecruitmentSimpleDto> resultsMap = Arrays.stream(response.getHits().getHits())
+                    .map(hit -> {
+                        Map<String, Object> sourceAsMap = hit.getSourceAsMap();
+                        String uuid = (String) sourceAsMap.get("uuid");
+                        String title = (String) sourceAsMap.get("title");
+                        String companyJson = (String) sourceAsMap.get("company");
+                        String companyName = parseCompanyName(companyJson);
+                        return new RecruitmentSimpleDto(uuid, title, companyName);
+                    })
+                    .collect(Collectors.toMap(RecruitmentSimpleDto::getUuid, dto -> dto));
 
-                String uuid = (String) sourceAsMap.get("uuid");
-                String title = (String) sourceAsMap.get("title");
-                String companyJson = (String) sourceAsMap.get("company");
-                String companyName = parseCompanyName(companyJson);
+            // DynamoDB의 UUID 순서대로 결과를 재정렬
+            List<RecruitmentSimpleDto> orderedResults = uuids.stream()
+                    .map(resultsMap::get)
+                    .filter(Objects::nonNull) // OpenSearch에 해당 UUID가 없는 경우 제외
+                    .collect(Collectors.toList());
 
-                result.add(new RecruitmentSimpleDto(uuid, title, companyName));
-            }
-            log.info("총 조회된 추천 공고 수: {}", result.size());
-            return result;
+            log.info("총 조회 및 순서 재정렬된 추천 공고 수: {}", orderedResults.size());
+            return orderedResults;
 
         } catch (IOException e) {
             log.error("OpenSearch 조회 실패 - uuids: {}", uuids, e);

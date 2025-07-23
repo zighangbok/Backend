@@ -17,6 +17,12 @@ repositories {
 	mavenCentral()
 }
 
+dependencyManagement {
+	imports {
+		mavenBom "software.amazon.awssdk:bom:2.25.40"
+	}
+}
+
 dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-web'
     implementation 'org.springframework.boot:spring-boot-starter-validation'
@@ -37,8 +43,9 @@ dependencies {
     implementation 'org.opensearch.client:opensearch-rest-high-level-client:2.11.0' // OpenSearch 2.11 기준
 
     // AWS DynamoDB
-    implementation 'software.amazon.awssdk:dynamodb:2.32.6'
-    implementation 'software.amazon.awssdk:url-connection-client:2.32.6'
+    implementation 'software.amazon.awssdk:dynamodb'
+    implementation 'software.amazon.awssdk:url-connection-client'
+    implementation 'software.amazon.awssdk:lambda'
 
 }
 
