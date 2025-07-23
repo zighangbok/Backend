@@ -34,6 +34,9 @@ public class UserService {
                 .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 id 입니다"));
 
         //비밀번호 검증
+        if (!user.getPassword().equals(request.getPassword())) {
+            throw new IllegalArgumentException("비밀번호가 일치하지 않습니다.");
+        }
 
         return UserLoginResponseDto.builder()
                 .id(user.getId())
