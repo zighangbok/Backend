@@ -38,9 +38,13 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
 import java.util.Objects;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
+import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
+import software.amazon.awssdk.services.s3.model.S3Exception;
 
 
 @Slf4j
@@ -239,10 +243,21 @@ public class RecruitmentService {
         try (ResponseInputStream<GetObjectResponse> s3Object = s3Client.getObject(getObjectRequest)) {
             Map<String, Object> vectorMap = objectMapper.readValue(s3Object, new TypeReference<Map<String, Object>>() {});
             log.info("S3 파일 읽기 성공. Bucket: {}, Key: {}", bucketName, key);
-            return new ArrayList<>(vectorMap.keySet());
+            List<String> uuids = new ArrayList<>(vectorMap.keySet());
+            log.info("S3 JSON 파일에서 {}개의 key(UUID)를 파싱했습니다.", uuids.size());
+            return uuids;
+        } catch (NoSuchKeyException e) {
+            log.error("S3 버킷 '{}'에 파일 '{}'이(가) 존재하지 않습니다. 파일을 확인해주세요.", bucketName, key);
+            throw new IOException("S3 파일을 찾을 수 없습니다.", e);
+        } catch (S3Exception e) {
+            log.error("S3 접근 중 오류가 발생했습니다. ECS Task Role의 IAM 권한을 확인하세요. Bucket: {}, Key: {}", bucketName, key, e);
+            throw new IOException("S3 서비스 오류가 발생했습니다.", e);
+        } catch (JsonProcessingException e) {
+            log.error("S3 파일 '{}'의 JSON 파싱에 실패했습니다. 파일 형식이 올바른지 확인해주세요.", key, e);
+            throw new IOException("JSON 데이터 처리 중 오류가 발생했습니다.", e);
         } catch (Exception e) {
-            log.error("S3에서 UUID 목록을 가져오는데 실패했습니다. Bucket: {}, Key: {}", bucketName, key, e);
-            throw new IOException("S3 파일 처리 중 오류가 발생했습니다.", e);
+            log.error("S3 파일 처리 중 예상치 못한 오류가 발생했습니다. Bucket: {}, Key: {}", bucketName, key, e);
+            throw new IOException("S3 파일 처리 중 일반 오류가 발생했습니다.", e);
         }
     }
 
