@@ -42,10 +42,8 @@ public class RecruitmentController {
     }
 
     @GetMapping("/recommendations")
-    public ResponseEntity<List<RecruitmentSimpleDto>> getRecommendedRecruitments(HttpSession session) {
-        String userId = (String) session.getAttribute("userId");
-
-        if (userId == null) {
+    public ResponseEntity<List<RecruitmentSimpleDto>> getRecommendedRecruitments(@RequestParam String userId) {
+        if (userId == null || userId.isEmpty()) {
             // 로그인되지 않은 사용자는 접근할 수 없도록 처리
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
@@ -55,8 +53,8 @@ public class RecruitmentController {
     }
 
     @PostMapping("/recommendations/rerank")
-    public ResponseEntity<Void> rerankRecommendations(HttpSession session, @RequestBody RerankRequestDto rerankRequestDto) {
-        String userId = (String) session.getAttribute("userId");
+    public ResponseEntity<Void> rerankRecommendations(@RequestBody RerankRequestDto rerankRequestDto) {
+        String userId = rerankRequestDto.getUserId();
 
         if (userId == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();

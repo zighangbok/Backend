@@ -10,5 +10,6 @@ import java.util.List;
 @Setter
 @NoArgsConstructor
 public class RerankRequestDto {
+    private String userId;
     private List<String> samples;
 } 

@@ -4,7 +4,6 @@ import com.backend.zighangbok.domain.user.dto.UserLoginRequestDto;
 import com.backend.zighangbok.domain.user.dto.UserLoginResponseDto;
 import com.backend.zighangbok.domain.user.dto.UserSignUpRequestDto;
 import com.backend.zighangbok.domain.user.service.UserService;
-import jakarta.servlet.http.HttpSession;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -36,11 +35,9 @@ public class UserController {
 
     @PostMapping("/login")
     public ResponseEntity<UserLoginResponseDto> login(
-            @Valid @RequestBody UserLoginRequestDto request, HttpSession session) {
+            @Valid @RequestBody UserLoginRequestDto request) {
         try {
             UserLoginResponseDto response = userService.login(request);
-
-            session.setAttribute("userId", response.getUserId());
 
             return ResponseEntity.ok(response);
         }//사용자 에러
