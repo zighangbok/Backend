@@ -10,11 +10,13 @@ import org.opensearch.action.search.SearchRequest;
 import org.opensearch.action.search.SearchResponse;
 import org.opensearch.client.RequestOptions;
 import org.opensearch.client.RestHighLevelClient;
+import org.opensearch.index.query.BoolQueryBuilder;
 import org.opensearch.index.query.QueryBuilders;
 import org.opensearch.search.SearchHit;
 import org.opensearch.search.builder.SearchSourceBuilder;
 import org.springframework.stereotype.Service;
 import software.amazon.awssdk.core.SdkBytes;
+import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
@@ -33,9 +35,13 @@ import java.util.stream.Collectors;
 
 import java.io.IOException;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
 import java.util.Objects;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 
 
 @Slf4j
@@ -46,6 +52,7 @@ public class RecruitmentService {
     private final RestHighLevelClient client;
     private final DynamoDbClient dynamoDbClient;
     private final LambdaClient lambdaClient; // LambdaClient 주입
+    private final S3Client s3Client;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public List<RecruitmentSimpleDto> getRecommendedRecruitments(String userId) {
@@ -218,20 +225,51 @@ public class RecruitmentService {
         }
     }
 
+    public List<String> getUuidsFromS3() throws IOException {
+        String bucketName = "zighangbok-vector";
+        LocalDate yesterday = LocalDate.now(ZoneId.of("Asia/Seoul")).minusDays(1);
+        String key = "item_vectors_" + yesterday.format(DateTimeFormatter.ISO_LOCAL_DATE) + ".json";
+
+        GetObjectRequest getObjectRequest = GetObjectRequest.builder()
+                .bucket(bucketName)
+                .key(key)
+                .build();
+
+        try (ResponseInputStream<GetObjectResponse> s3Object = s3Client.getObject(getObjectRequest)) {
+            Map<String, Object> vectorMap = objectMapper.readValue(s3Object, new TypeReference<Map<String, Object>>() {});
+            return new ArrayList<>(vectorMap.keySet());
+        } catch (Exception e) {
+            log.error("S3에서 UUID 목록을 가져오는데 실패했습니다.", e);
+            throw new IOException("S3 파일 처리 중 오류가 발생했습니다.", e);
+        }
+    }
+
+
     public List<RecruitmentListDto> getRecruitmentList(int page, int size) {
         log.info("채용정보 조회 요청 - page: {}, size: {}", page, size);
 
-        SearchRequest searchRequest = new SearchRequest("recruitment_parsed");
-        SearchSourceBuilder sourceBuilder = new SearchSourceBuilder();
-
-        int from = page * size;
-        sourceBuilder.query(QueryBuilders.termQuery("depthFilter", 1));
-        sourceBuilder.from(from);
-        sourceBuilder.size(size);
-
-        searchRequest.source(sourceBuilder);
-
         try {
+            List<String> uuids = getUuidsFromS3();
+            if (uuids.isEmpty()) {
+                log.warn("S3에서 가져온 UUID 목록이 비어있습니다. 빈 리스트를 반환합니다.");
+                return new ArrayList<>();
+            }
+
+            SearchRequest searchRequest = new SearchRequest("recruitment_parsed");
+            SearchSourceBuilder sourceBuilder = new SearchSourceBuilder();
+
+            // S3의 UUID 목록과 depthFilter 조건을 모두 만족하도록 bool 쿼리 사용
+            BoolQueryBuilder boolQuery = QueryBuilders.boolQuery()
+                    .must(QueryBuilders.termsQuery("uuid.keyword", uuids)) // .keyword 필드로 정확히 조회
+                    .must(QueryBuilders.termQuery("depthFilter", 1));     // IT/AI 직군 필터
+
+            int from = page * size;
+            sourceBuilder.query(boolQuery); // 수정된 bool 쿼리 적용
+            sourceBuilder.from(from);
+            sourceBuilder.size(size);
+
+            searchRequest.source(sourceBuilder);
+
             SearchResponse response = client.search(searchRequest, RequestOptions.DEFAULT);
             List<RecruitmentListDto> result = new ArrayList<>();
 
@@ -240,15 +278,15 @@ public class RecruitmentService {
 
                 String uuid = (String) sourceAsMap.get("uuid");
                 String title = (String) sourceAsMap.get("title");
-                String companyJson = (String) sourceAsMap.get("company"); // company는 String 형태임
+                String companyJson = (String) sourceAsMap.get("company");
 
                 String companyName = parseCompanyName(companyJson);
 
                 RecruitmentListDto dto = RecruitmentListDto.builder()
                         .uuid(uuid)
                         .title(title)
-                        .company(companyJson)     // raw string도 넣어둠
-                        .companyName(companyName) // 파싱된 회사명
+                        .company(companyJson)
+                        .companyName(companyName)
                         .build();
 
                 result.add(dto);
@@ -260,7 +298,7 @@ public class RecruitmentService {
             return result;
 
         } catch (IOException e) {
-            log.error("OpenSearch 조회 실패", e);
+            log.error("OpenSearch 조회 또는 S3 처리 실패", e);
             throw new RuntimeException("채용정보 조회 중 오류가 발생했습니다.", e);
         }
     }
