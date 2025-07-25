@@ -10,7 +10,6 @@ import org.opensearch.action.search.SearchRequest;
 import org.opensearch.action.search.SearchResponse;
 import org.opensearch.client.RequestOptions;
 import org.opensearch.client.RestHighLevelClient;
-import org.opensearch.index.query.BoolQueryBuilder;
 import org.opensearch.index.query.QueryBuilders;
 import org.opensearch.search.SearchHit;
 import org.opensearch.search.builder.SearchSourceBuilder;
@@ -230,6 +229,8 @@ public class RecruitmentService {
         LocalDate yesterday = LocalDate.now(ZoneId.of("Asia/Seoul")).minusDays(1);
         String key = "item_vectors_" + yesterday.format(DateTimeFormatter.ISO_LOCAL_DATE) + ".json";
 
+        log.info("S3에서 파일을 읽으려고 시도합니다. Bucket: {}, Key: {}", bucketName, key);
+
         GetObjectRequest getObjectRequest = GetObjectRequest.builder()
                 .bucket(bucketName)
                 .key(key)
@@ -237,44 +238,53 @@ public class RecruitmentService {
 
         try (ResponseInputStream<GetObjectResponse> s3Object = s3Client.getObject(getObjectRequest)) {
             Map<String, Object> vectorMap = objectMapper.readValue(s3Object, new TypeReference<Map<String, Object>>() {});
+            log.info("S3 파일 읽기 성공. Bucket: {}, Key: {}", bucketName, key);
             return new ArrayList<>(vectorMap.keySet());
         } catch (Exception e) {
-            log.error("S3에서 UUID 목록을 가져오는데 실패했습니다.", e);
+            log.error("S3에서 UUID 목록을 가져오는데 실패했습니다. Bucket: {}, Key: {}", bucketName, key, e);
             throw new IOException("S3 파일 처리 중 오류가 발생했습니다.", e);
         }
     }
 
 
     public List<RecruitmentListDto> getRecruitmentList(int page, int size) {
-        log.info("채용정보 조회 요청 - page: {}, size: {}", page, size);
+        log.info("채용정보 조회 시작 - page: {}, size: {}", page, size);
 
         try {
+            log.info("S3에서 UUID 목록 조회를 시작합니다.");
             List<String> uuids = getUuidsFromS3();
+            log.info("S3에서 {}개의 UUID를 조회했습니다.", uuids.size());
+
             if (uuids.isEmpty()) {
-                log.warn("S3에서 가져온 UUID 목록이 비어있습니다. 빈 리스트를 반환합니다.");
+                log.warn("S3에서 조회된 UUID가 없어 빈 목록을 반환합니다.");
                 return new ArrayList<>();
             }
 
             SearchRequest searchRequest = new SearchRequest("recruitment_parsed");
             SearchSourceBuilder sourceBuilder = new SearchSourceBuilder();
 
-            // S3의 UUID 목록과 depthFilter 조건을 모두 만족하도록 bool 쿼리 사용
-            BoolQueryBuilder boolQuery = QueryBuilders.boolQuery()
-                    .must(QueryBuilders.termsQuery("uuid.keyword", uuids)) // .keyword 필드로 정확히 조회
-                    .must(QueryBuilders.termQuery("depthFilter", 1));     // IT/AI 직군 필터
-
             int from = page * size;
-            sourceBuilder.query(boolQuery); // 수정된 bool 쿼리 적용
+            
+            // Bool 쿼리 생성
+            var boolQuery = QueryBuilders.boolQuery()
+                    .must(QueryBuilders.termsQuery("uuid.keyword", uuids)) // .keyword 추가
+                    .must(QueryBuilders.termQuery("depthFilter", 1)); // depthFilter 조건 다시 추가
+
+            sourceBuilder.query(boolQuery);
             sourceBuilder.from(from);
             sourceBuilder.size(size);
 
             searchRequest.source(sourceBuilder);
+            log.info("OpenSearch 쿼리 생성 완료:\n{}", searchRequest.source().toString());
 
+            log.info("OpenSearch로 검색을 요청합니다.");
             SearchResponse response = client.search(searchRequest, RequestOptions.DEFAULT);
-            List<RecruitmentListDto> result = new ArrayList<>();
+            log.info("OpenSearch 응답 수신. 총 {}개의 문서를 찾았습니다.", response.getHits().getTotalHits().value);
 
+            List<RecruitmentListDto> result = new ArrayList<>();
             for (SearchHit hit : response.getHits().getHits()) {
                 Map<String, Object> sourceAsMap = hit.getSourceAsMap();
+                log.debug("결과 파싱 중: {}", sourceAsMap);
 
                 String uuid = (String) sourceAsMap.get("uuid");
                 String title = (String) sourceAsMap.get("title");
@@ -294,11 +304,11 @@ public class RecruitmentService {
                 log.debug("조회된 데이터 - uuid: {}, title: {}, companyName: {}", uuid, title, companyName);
             }
 
-            log.info("총 조회된 문서 수: {}", response.getHits().getTotalHits().value);
+            log.info("최종적으로 {}개의 채용정보를 반환합니다.", result.size());
             return result;
 
         } catch (IOException e) {
-            log.error("OpenSearch 조회 또는 S3 처리 실패", e);
+            log.error("채용정보 조회 중 심각한 오류 발생", e);
             throw new RuntimeException("채용정보 조회 중 오류가 발생했습니다.", e);
         }
     }
