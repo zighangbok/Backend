@@ -26,6 +26,7 @@ import software.amazon.awssdk.services.lambda.model.InvokeRequest;
 import software.amazon.awssdk.services.lambda.model.InvokeResponse;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -74,6 +75,7 @@ public class RecruitmentService {
 
     private List<String> getRecommendationsFromDynamoDB(String userId) {
         String today = LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE);
+        log.info("DynamoDB 추천 목록 조회를 시작합니다. userId: {}, 오늘 날짜: {}", userId, today);
 
         GetItemRequest request = GetItemRequest.builder()
                 .tableName("user_recommendations")
@@ -84,28 +86,34 @@ public class RecruitmentService {
             GetItemResponse response = dynamoDbClient.getItem(request);
             if (response.hasItem()) {
                 Map<String, AttributeValue> item = response.item();
+                log.info("DynamoDB에서 userId '{}'에 대한 항목을 찾았습니다.", userId);
+
                 String createdAt = item.get("created_at").s();
+                log.info("저장된 추천 날짜: {}. 오늘 날짜와 비교합니다.", createdAt);
 
-                if (!today.equals(createdAt)) {
-                    log.warn("DynamoDB의 추천 데이터가 최신이 아닙니다. userId: {}, createdAt: {}", userId, createdAt);
-
-                    return Collections.emptyList();
-                }
+//                if (!today.equals(createdAt)) {
+//                    log.warn("날짜 불일치: DynamoDB의 추천 데이터가 최신이 아닙니다. (저장된 날짜: {}, 오늘 날짜: {}). 빈 목록을 반환합니다.", createdAt, today);
+//                    return Collections.emptyList();
+//                }
 
                 AttributeValue recommendationsAttr = item.get("recommendations");
                 if (recommendationsAttr != null && recommendationsAttr.hasL()) {
-                    log.info("DynamoDB에서 추천 목록 {}개를 찾았습니다. userId: {}", recommendationsAttr.l().size(), userId);
-                    return recommendationsAttr.l().stream()
+                    List<String> recommendationUuids = recommendationsAttr.l().stream()
                             .map(AttributeValue::s)
                             .collect(Collectors.toList());
+                    log.info("DynamoDB에서 {}개의 추천 UUID를 성공적으로 조회했습니다. (샘플 5개: {})", recommendationUuids.size(), recommendationUuids.subList(0, Math.min(5, recommendationUuids.size())));
+                    return recommendationUuids;
+                } else {
+                    log.warn("항목은 찾았으나, 'recommendations' 속성이 없거나 리스트 형식이 아닙니다.");
                 }
             } else {
-                log.warn("DynamoDB에서 추천 데이터를 찾을 수 없습니다. userId: {}", userId);
+                log.warn("DynamoDB에서 userId '{}'에 대한 항목을 찾을 수 없습니다.", userId);
             }
         } catch (Exception e) {
             log.error("DynamoDB 조회 실패 - userId: {}", userId, e);
             throw new RuntimeException("추천 정보 조회 중 오류가 발생했습니다.", e);
         }
+        log.warn("DynamoDB 조회 과정에서 최종적으로 빈 목록을 반환합니다. userId: {}", userId);
         return Collections.emptyList();
     }
 
@@ -187,9 +195,10 @@ public class RecruitmentService {
 
     private List<RecruitmentSimpleDto> getRecruitmentsFromOpenSearch(List<String> uuids) {
         if (uuids == null || uuids.isEmpty()) {
+            log.warn("OpenSearch 조회 단계로 넘어온 UUID 목록이 비어있어 조회를 생략합니다.");
             return Collections.emptyList();
         }
-        log.info("OpenSearch에서 {}개의 채용 공고 조회를 시작합니다. (순서 재정렬 포함)", uuids.size());
+        log.info("OpenSearch에서 {}개의 채용 공고 조회를 시작합니다. (샘플 5개: {})", uuids.size(), uuids.subList(0, Math.min(5, uuids.size())));
 
         SearchRequest searchRequest = new SearchRequest("recruitment_parsed");
         SearchSourceBuilder sourceBuilder = new SearchSourceBuilder();
@@ -197,9 +206,11 @@ public class RecruitmentService {
         sourceBuilder.query(QueryBuilders.termsQuery("uuid.keyword", uuids));
         sourceBuilder.size(uuids.size()); // 모든 문서를 가져오기 위해 크기를 uuid 리스트 크기로 설정
         searchRequest.source(sourceBuilder);
+        log.info("OpenSearch 쿼리 생성 완료:\n{}", searchRequest.source().toString());
 
         try {
             SearchResponse response = client.search(searchRequest, RequestOptions.DEFAULT);
+            log.info("OpenSearch 응답 수신. 총 {}개의 문서를 찾았습니다.", response.getHits().getTotalHits().value);
 
             // OpenSearch 결과를 UUID를 키로 하는 Map으로 변환 (순서 보장 없음)
             Map<String, RecruitmentSimpleDto> resultsMap = Arrays.stream(response.getHits().getHits())
@@ -219,6 +230,9 @@ public class RecruitmentService {
                     .filter(Objects::nonNull) // OpenSearch에 해당 UUID가 없는 경우 제외
                     .collect(Collectors.toList());
 
+            if (uuids.size() != orderedResults.size()) {
+                log.warn("OpenSearch 조회 결과와 DynamoDB UUID 목록 개수가 다릅니다. (DynamoDB: {}개, OpenSearch: {}개)", uuids.size(), orderedResults.size());
+            }
             log.info("총 조회 및 순서 재정렬된 추천 공고 수: {}", orderedResults.size());
             return orderedResults;
 
@@ -241,7 +255,8 @@ public class RecruitmentService {
                 .build();
 
         try (ResponseInputStream<GetObjectResponse> s3Object = s3Client.getObject(getObjectRequest)) {
-            Map<String, Object> vectorMap = objectMapper.readValue(s3Object, new TypeReference<Map<String, Object>>() {});
+            Map<String, Object> vectorMap = objectMapper.readValue(s3Object, new TypeReference<Map<String, Object>>() {
+            });
             log.info("S3 파일 읽기 성공. Bucket: {}, Key: {}", bucketName, key);
             List<String> uuids = new ArrayList<>(vectorMap.keySet());
             log.info("S3 JSON 파일에서 {}개의 key(UUID)를 파싱했습니다.", uuids.size());
@@ -274,12 +289,15 @@ public class RecruitmentService {
                 log.warn("S3에서 조회된 UUID가 없어 빈 목록을 반환합니다.");
                 return new ArrayList<>();
             }
+            if (!uuids.isEmpty()) {
+                log.info("S3 UUID 목록 (샘플 5개): {}", uuids.subList(0, Math.min(5, uuids.size())));
+            }
 
             SearchRequest searchRequest = new SearchRequest("recruitment_parsed");
             SearchSourceBuilder sourceBuilder = new SearchSourceBuilder();
 
             int from = page * size;
-            
+
             // Bool 쿼리 생성
             var boolQuery = QueryBuilders.boolQuery()
                     .must(QueryBuilders.termsQuery("uuid.keyword", uuids)) // .keyword 추가
@@ -297,11 +315,13 @@ public class RecruitmentService {
             log.info("OpenSearch 응답 수신. 총 {}개의 문서를 찾았습니다.", response.getHits().getTotalHits().value);
 
             List<RecruitmentListDto> result = new ArrayList<>();
+            List<String> responseUuids = new ArrayList<>();
             for (SearchHit hit : response.getHits().getHits()) {
                 Map<String, Object> sourceAsMap = hit.getSourceAsMap();
                 log.debug("결과 파싱 중: {}", sourceAsMap);
 
                 String uuid = (String) sourceAsMap.get("uuid");
+                responseUuids.add(uuid);
                 String title = (String) sourceAsMap.get("title");
                 String companyJson = (String) sourceAsMap.get("company");
 
@@ -317,6 +337,21 @@ public class RecruitmentService {
                 result.add(dto);
 
                 log.debug("조회된 데이터 - uuid: {}, title: {}, companyName: {}", uuid, title, companyName);
+            }
+
+            // [Debug] S3 목록에 없는 UUID가 반환되었는지 검증
+            List<String> finalUuids = uuids;
+            List<String> unexpectedUuids = responseUuids.stream()
+                    .filter(uuid -> !finalUuids.contains(uuid))
+                    .collect(Collectors.toList());
+
+            if (!unexpectedUuids.isEmpty()) {
+                String errorMessage = String.format(
+                        "!!!!!!!!!! 데이터 불일치 오류: OpenSearch가 S3에 없는 UUID를 반환했습니다! 비정상 UUID: %s !!!!!!!!!!",
+                        unexpectedUuids
+                );
+                log.error(errorMessage);
+                throw new IllegalStateException(errorMessage); // 요청을 중단시키고 에러를 발생시킴
             }
 
             log.info("최종적으로 {}개의 채용정보를 반환합니다.", result.size());
@@ -335,13 +370,14 @@ public class RecruitmentService {
         try {
             // 작은따옴표를 큰따옴표로 변환
             String fixedJson = companyJson.replace("'", "\"").replace("None", "null");
-            Map<String, Object> companyMap = objectMapper.readValue(fixedJson, new TypeReference<>() {});
+            Map<String, Object> companyMap = objectMapper.readValue(fixedJson, new TypeReference<>() {
+            });
 
             if (companyMap.get("companyName") != null) {
                 return companyMap.get("companyName").toString();
             }
         } catch (Exception e) {
-            log.warn("회사 정보 파싱 실패: {}", companyJson);
+            //log.warn("회사 정보 파싱 실패: {}", companyJson);
         }
         return "회사명 없음";
     }
@@ -350,7 +386,7 @@ public class RecruitmentService {
         List<RecruitmentListDto> fullList = getRecruitmentList(page, size);
 
         return fullList.stream()
-                .map(r -> new RecruitmentSimpleDto(r.getUuid(),r.getTitle(), r.getCompanyName()))
+                .map(r -> new RecruitmentSimpleDto(r.getUuid(), r.getTitle(), r.getCompanyName()))
                 .collect(Collectors.toList());
     }
 }
