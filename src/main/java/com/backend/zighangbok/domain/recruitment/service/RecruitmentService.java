@@ -243,9 +243,13 @@ public class RecruitmentService {
     }
 
     public List<String> getUuidsFromS3() throws IOException {
+        //String bucketName = "zighangbok-vector";
+        //LocalDate yesterday = LocalDate.now(ZoneId.of("Asia/Seoul")).minusDays(1);
+        //String key = "item_vectors_" + yesterday.format(DateTimeFormatter.ISO_LOCAL_DATE) + ".json";
+
         String bucketName = "zighangbok-vector";
-        LocalDate yesterday = LocalDate.now(ZoneId.of("Asia/Seoul")).minusDays(1);
-        String key = "item_vectors_" + yesterday.format(DateTimeFormatter.ISO_LOCAL_DATE) + ".json";
+        LocalDate fixedDate = LocalDate.of(2025, 7, 26);
+        String key = "item_vectors_" + fixedDate.format(DateTimeFormatter.ISO_LOCAL_DATE) + ".json";
 
         log.info("S3에서 파일을 읽으려고 시도합니다. Bucket: {}, Key: {}", bucketName, key);
 
