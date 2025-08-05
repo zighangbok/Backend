@@ -43,12 +43,17 @@ public class RecruitmentController {
 
     @GetMapping("/recommendations")
     public ResponseEntity<List<RecruitmentSimpleDto>> getRecommendedRecruitments(@RequestParam String userId) {
+        long start = System.currentTimeMillis(); //측정시작
         if (userId == null || userId.isEmpty()) {
             // 로그인되지 않은 사용자는 접근할 수 없도록 처리
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
 
         List<RecruitmentSimpleDto> recommendations = recruitmentService.getRecommendedRecruitments(userId);
+
+        long end = System.currentTimeMillis(); // 종료 시각 측정
+        log.info("[추천 API] userId={} 응답 시간: {} ms", userId, (end - start));
+
         return ResponseEntity.ok(recommendations);
     }
 
