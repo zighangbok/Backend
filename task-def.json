@@ -7,10 +7,10 @@
     {
       "name": "zighangbok",
       "image": "340547707424.dkr.ecr.ap-northeast-2.amazonaws.com/zighangbok:latest",
-      "cpu": 0,
+      "cpu": 512,
       "portMappings": [
         {
-          "name": "zighangbok-8800-tcp",
+          "name": "zighangbok-8080-tcp",
           "containerPort": 8080,
           "hostPort": 8080,
           "protocol": "tcp",
@@ -18,11 +18,6 @@
         }
       ],
       "essential": true,
-      "environment": [],
-      "environmentFiles": [],
-      "mountPoints": [],
-      "volumesFrom": [],
-      "ulimits": [],
       "logConfiguration": {
         "logDriver": "awslogs",
         "options": {
@@ -30,13 +25,32 @@
           "awslogs-create-group": "true",
           "awslogs-region": "ap-northeast-2",
           "awslogs-stream-prefix": "ecs"
-        },
-        "secretOptions": []
-      },
-      "systemControls": []
+        }
+      }
+    },
+    {
+      "name": "redis",
+      "image": "redis:7",
+      "cpu": 256,
+      "portMappings": [
+        {
+          "containerPort": 6379,
+          "hostPort": 6379,
+          "protocol": "tcp"
+        }
+      ],
+      "essential": false,
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/zighangbok",
+          "awslogs-region": "ap-northeast-2",
+          "awslogs-stream-prefix": "redis"
+        }
+      }
     }
   ],
-  "requiresCompatibilities": [ "FARGATE" ],
+  "requiresCompatibilities": ["FARGATE"],
   "cpu": "1024",
   "memory": "3072",
   "ephemeralStorage": {
@@ -49,3 +63,4 @@
   "volumes": [],
   "placementConstraints": []
 }
+

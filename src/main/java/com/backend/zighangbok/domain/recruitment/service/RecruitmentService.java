@@ -4,6 +4,8 @@ import com.backend.zighangbok.domain.recruitment.dto.RecruitmentListDto;
 import com.backend.zighangbok.domain.recruitment.dto.RecruitmentSimpleDto;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.Duration;
+import java.util.concurrent.atomic.AtomicInteger;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.opensearch.action.search.SearchRequest;
@@ -46,6 +48,7 @@ import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.S3Exception;
+import org.springframework.data.redis.core.RedisTemplate;
 
 
 @Slf4j
@@ -59,18 +62,40 @@ public class RecruitmentService {
     private final S3Client s3Client;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    private final RedisTemplate<String, List<RecruitmentSimpleDto>> redisTemplate;
+
+    private final AtomicInteger hitCount = new AtomicInteger(0);
+    private final AtomicInteger missCount = new AtomicInteger(0);
+
     public List<RecruitmentSimpleDto> getRecommendedRecruitments(String userId) {
         log.info("추천 채용 정보 조회 요청 - userId: {}", userId);
 
-        // 1. DynamoDB에서 추천 목록 조회
+        String redisKey = "recommendations:" + userId;
+
+        // 1. Redis 캐시 확인
+        List<RecruitmentSimpleDto> cached = redisTemplate.opsForValue().get(redisKey);
+        if (cached != null) {
+            hitCount.incrementAndGet();
+            log.info("🔵 Redis HIT - key: {}", redisKey);
+            return cached;
+        }
+
+        missCount.incrementAndGet();
+        log.info("🔴 Redis MISS - key: {}", redisKey);
+
+        // 2. DynamoDB에서 추천 목록 조회
         List<String> recommendationUuids = getRecommendationsFromDynamoDB(userId);
         if (recommendationUuids.isEmpty()) {
             log.info("사용자에게 해당하는 추천 채용 정보가 없습니다. userId: {}", userId);
             return Collections.emptyList();
         }
 
-        // 2. OpenSearch에서 추천된 공고 상세 정보 조회
-        return getRecruitmentsFromOpenSearch(recommendationUuids);
+        // 3. OpenSearch에서 상세 공고 조회
+        List<RecruitmentSimpleDto> result = getRecruitmentsFromOpenSearch(recommendationUuids);
+
+        // 4. Redis 캐시에 저장 (TTL 10분)
+        redisTemplate.opsForValue().set(redisKey, result, Duration.ofMinutes(10));
+        return result;
     }
 
     private List<String> getRecommendationsFromDynamoDB(String userId) {
