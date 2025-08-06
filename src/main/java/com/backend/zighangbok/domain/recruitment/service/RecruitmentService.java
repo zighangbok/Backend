@@ -2,10 +2,21 @@ package com.backend.zighangbok.domain.recruitment.service;
 
 import com.backend.zighangbok.domain.recruitment.dto.RecruitmentListDto;
 import com.backend.zighangbok.domain.recruitment.dto.RecruitmentSimpleDto;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.IOException;
 import java.time.Duration;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.opensearch.action.search.SearchRequest;
@@ -15,9 +26,12 @@ import org.opensearch.client.RestHighLevelClient;
 import org.opensearch.index.query.QueryBuilders;
 import org.opensearch.search.SearchHit;
 import org.opensearch.search.builder.SearchSourceBuilder;
+import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
-import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.core.ResponseInputStream;
+import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
@@ -26,29 +40,11 @@ import software.amazon.awssdk.services.dynamodb.model.UpdateItemRequest;
 import software.amazon.awssdk.services.lambda.LambdaClient;
 import software.amazon.awssdk.services.lambda.model.InvokeRequest;
 import software.amazon.awssdk.services.lambda.model.InvokeResponse;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
-
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-import java.util.stream.Collectors;
-
-import java.io.IOException;
-import java.time.LocalDate;
-import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
-import java.util.Arrays;
-import java.util.Objects;
-
-import com.fasterxml.jackson.core.JsonProcessingException;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.S3Exception;
-import org.springframework.data.redis.core.RedisTemplate;
 
 
 @Slf4j
@@ -62,7 +58,7 @@ public class RecruitmentService {
     private final S3Client s3Client;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    private final RedisTemplate<String, List<RecruitmentSimpleDto>> redisTemplate;
+    private final RedisTemplate<String, Object> redisTemplate;
 
     private final AtomicInteger hitCount = new AtomicInteger(0);
     private final AtomicInteger missCount = new AtomicInteger(0);
@@ -73,7 +69,8 @@ public class RecruitmentService {
         String redisKey = "recommendations:" + userId;
 
         // 1. Redis 캐시 확인
-        List<RecruitmentSimpleDto> cached = redisTemplate.opsForValue().get(redisKey);
+        @SuppressWarnings("unchecked")
+        List<RecruitmentSimpleDto> cached = (List<RecruitmentSimpleDto>) redisTemplate.opsForValue().get(redisKey);
         if (cached != null) {
             hitCount.incrementAndGet();
             log.info("🔵 Redis HIT - key: {}", redisKey);
@@ -126,7 +123,9 @@ public class RecruitmentService {
                     List<String> recommendationUuids = recommendationsAttr.l().stream()
                             .map(AttributeValue::s)
                             .collect(Collectors.toList());
-                    log.info("DynamoDB에서 {}개의 추천 UUID를 성공적으로 조회했습니다. (샘플 5개: {})", recommendationUuids.size(), recommendationUuids.subList(0, Math.min(5, recommendationUuids.size())));
+                    log.info("DynamoDB에서 {}개의 추천 UUID를 성공적으로 조회했습니다. (샘플 5개: {})",
+                            recommendationUuids.size(), recommendationUuids.subList(0,
+                                    Math.min(5, recommendationUuids.size())));
                     return recommendationUuids;
                 } else {
                     log.warn("항목은 찾았으나, 'recommendations' 속성이 없거나 리스트 형식이 아닙니다.");
@@ -154,7 +153,8 @@ public class RecruitmentService {
 
         if (recommendationUuids.size() > 5) {
             List<String> topFive = new ArrayList<>(recommendationUuids.subList(0, 5));
-            List<String> remaining = new ArrayList<>(recommendationUuids.subList(5, recommendationUuids.size()));
+            List<String> remaining =
+                    new ArrayList<>(recommendationUuids.subList(5, recommendationUuids.size()));
             remaining.addAll(topFive);
             updateRecommendationsInDynamoDB(userId, remaining);
             log.warn("re-ranked recommendationUuids: {}", remaining); // 리랭킹 후
@@ -184,7 +184,8 @@ public class RecruitmentService {
 
         try {
             InvokeResponse response = lambdaClient.invoke(request);
-            log.info("Lambda function invoked successfully, response: {}", response.payload().asUtf8String());
+            log.info("Lambda function invoked successfully, response: {}",
+                    response.payload().asUtf8String());
         } catch (Exception e) {
             log.error("Failed to invoke Lambda function", e);
         }
@@ -223,7 +224,8 @@ public class RecruitmentService {
             log.warn("OpenSearch 조회 단계로 넘어온 UUID 목록이 비어있어 조회를 생략합니다.");
             return Collections.emptyList();
         }
-        log.info("OpenSearch에서 {}개의 채용 공고 조회를 시작합니다. (샘플 5개: {})", uuids.size(), uuids.subList(0, Math.min(5, uuids.size())));
+        log.info("OpenSearch에서 {}개의 채용 공고 조회를 시작합니다. (샘플 5개: {})", uuids.size(),
+                uuids.subList(0, Math.min(5, uuids.size())));
 
         SearchRequest searchRequest = new SearchRequest("recruitment_parsed");
         SearchSourceBuilder sourceBuilder = new SearchSourceBuilder();
@@ -235,19 +237,21 @@ public class RecruitmentService {
 
         try {
             SearchResponse response = client.search(searchRequest, RequestOptions.DEFAULT);
-            log.info("OpenSearch 응답 수신. 총 {}개의 문서를 찾았습니다.", response.getHits().getTotalHits().value);
+            log.info("OpenSearch 응답 수신. 총 {}개의 문서를 찾았습니다.",
+                    response.getHits().getTotalHits().value);
 
             // OpenSearch 결과를 UUID를 키로 하는 Map으로 변환 (순서 보장 없음)
-            Map<String, RecruitmentSimpleDto> resultsMap = Arrays.stream(response.getHits().getHits())
-                    .map(hit -> {
-                        Map<String, Object> sourceAsMap = hit.getSourceAsMap();
-                        String uuid = (String) sourceAsMap.get("uuid");
-                        String title = (String) sourceAsMap.get("title");
-                        String companyJson = (String) sourceAsMap.get("company");
-                        String companyName = parseCompanyName(companyJson);
-                        return new RecruitmentSimpleDto(uuid, title, companyName);
-                    })
-                    .collect(Collectors.toMap(RecruitmentSimpleDto::getUuid, dto -> dto));
+            Map<String, RecruitmentSimpleDto> resultsMap =
+                    Arrays.stream(response.getHits().getHits())
+                            .map(hit -> {
+                                Map<String, Object> sourceAsMap = hit.getSourceAsMap();
+                                String uuid = (String) sourceAsMap.get("uuid");
+                                String title = (String) sourceAsMap.get("title");
+                                String companyJson = (String) sourceAsMap.get("company");
+                                String companyName = parseCompanyName(companyJson);
+                                return new RecruitmentSimpleDto(uuid, title, companyName);
+                            })
+                            .collect(Collectors.toMap(RecruitmentSimpleDto::getUuid, dto -> dto));
 
             // DynamoDB의 UUID 순서대로 결과를 재정렬
             List<RecruitmentSimpleDto> orderedResults = uuids.stream()
@@ -256,7 +260,9 @@ public class RecruitmentService {
                     .collect(Collectors.toList());
 
             if (uuids.size() != orderedResults.size()) {
-                log.warn("OpenSearch 조회 결과와 DynamoDB UUID 목록 개수가 다릅니다. (DynamoDB: {}개, OpenSearch: {}개)", uuids.size(), orderedResults.size());
+                log.warn(
+                        "OpenSearch 조회 결과와 DynamoDB UUID 목록 개수가 다릅니다. (DynamoDB: {}개, OpenSearch: {}개)",
+                        uuids.size(), orderedResults.size());
             }
             log.info("총 조회 및 순서 재정렬된 추천 공고 수: {}", orderedResults.size());
             return orderedResults;
@@ -283,9 +289,11 @@ public class RecruitmentService {
                 .key(key)
                 .build();
 
-        try (ResponseInputStream<GetObjectResponse> s3Object = s3Client.getObject(getObjectRequest)) {
-            Map<String, Object> vectorMap = objectMapper.readValue(s3Object, new TypeReference<Map<String, Object>>() {
-            });
+        try (ResponseInputStream<GetObjectResponse> s3Object = s3Client.getObject(
+                getObjectRequest)) {
+            Map<String, Object> vectorMap =
+                    objectMapper.readValue(s3Object, new TypeReference<Map<String, Object>>() {
+                    });
             log.info("S3 파일 읽기 성공. Bucket: {}, Key: {}", bucketName, key);
             List<String> uuids = new ArrayList<>(vectorMap.keySet());
             log.info("S3 JSON 파일에서 {}개의 key(UUID)를 파싱했습니다.", uuids.size());
@@ -294,7 +302,8 @@ public class RecruitmentService {
             log.error("S3 버킷 '{}'에 파일 '{}'이(가) 존재하지 않습니다. 파일을 확인해주세요.", bucketName, key);
             throw new IOException("S3 파일을 찾을 수 없습니다.", e);
         } catch (S3Exception e) {
-            log.error("S3 접근 중 오류가 발생했습니다. ECS Task Role의 IAM 권한을 확인하세요. Bucket: {}, Key: {}", bucketName, key, e);
+            log.error("S3 접근 중 오류가 발생했습니다. ECS Task Role의 IAM 권한을 확인하세요. Bucket: {}, Key: {}",
+                    bucketName, key, e);
             throw new IOException("S3 서비스 오류가 발생했습니다.", e);
         } catch (JsonProcessingException e) {
             log.error("S3 파일 '{}'의 JSON 파싱에 실패했습니다. 파일 형식이 올바른지 확인해주세요.", key, e);
@@ -341,7 +350,8 @@ public class RecruitmentService {
 
             log.info("OpenSearch로 검색을 요청합니다.");
             SearchResponse response = client.search(searchRequest, RequestOptions.DEFAULT);
-            log.info("OpenSearch 응답 수신. 총 {}개의 문서를 찾았습니다.", response.getHits().getTotalHits().value);
+            log.info("OpenSearch 응답 수신. 총 {}개의 문서를 찾았습니다.",
+                    response.getHits().getTotalHits().value);
 
             List<RecruitmentListDto> result = new ArrayList<>();
             List<String> responseUuids = new ArrayList<>();
@@ -365,7 +375,8 @@ public class RecruitmentService {
 
                 result.add(dto);
 
-                log.debug("조회된 데이터 - uuid: {}, title: {}, companyName: {}", uuid, title, companyName);
+                log.debug("조회된 데이터 - uuid: {}, title: {}, companyName: {}", uuid, title,
+                        companyName);
             }
 
             // [Debug] S3 목록에 없는 UUID가 반환되었는지 검증
@@ -399,8 +410,9 @@ public class RecruitmentService {
         try {
             // 작은따옴표를 큰따옴표로 변환
             String fixedJson = companyJson.replace("'", "\"").replace("None", "null");
-            Map<String, Object> companyMap = objectMapper.readValue(fixedJson, new TypeReference<>() {
-            });
+            Map<String, Object> companyMap =
+                    objectMapper.readValue(fixedJson, new TypeReference<>() {
+                    });
 
             if (companyMap.get("companyName") != null) {
                 return companyMap.get("companyName").toString();
